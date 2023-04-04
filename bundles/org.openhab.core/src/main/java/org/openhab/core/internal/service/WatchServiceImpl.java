@@ -112,7 +112,7 @@ public class WatchServiceImpl implements WatchService, DirectoryChangeListener {
             closeWatcherAndUnregister();
 
             if (!Files.exists(basePath)) {
-                logger.info("Watch directory '{}' does not exists. Trying to create it.", basePath);
+                logger.info("Watch directory '{}' does not exist. Trying to create it.", basePath);
                 Files.createDirectories(basePath);
             }
 
@@ -232,38 +232,50 @@ public class WatchServiceImpl implements WatchService, DirectoryChangeListener {
             future = scheduler.schedule(() -> notifyListeners(path), PROCESSING_TIME, TimeUnit.MILLISECONDS);
             scheduledEventKinds.computeIfAbsent(path, k -> new CopyOnWriteArrayList<>()).add(kind);
             scheduledEvents.put(path, future);
-
         }
     }
 
     private void notifyListeners(Path path) {
         List<Kind> kinds = scheduledEventKinds.remove(path);
+        logger.trace("notifyListeners({}) kinds: {}", path, kinds);
+
         if (kinds == null || kinds.isEmpty()) {
             logger.debug("Tried to notify listeners of change events for '{}', but the event list is empty.", path);
             return;
         }
 
+        reduceEvents(path, kinds).stream().forEachOrdered(kind -> doNotify(path, kind));
+    }
+
+    private List<Kind> reduceEvents(Path path, List<Kind> kinds) {
         if (kinds.size() == 1) {
             // we have only one event
-            doNotify(path, kinds.get(0));
-            return;
+            return kinds;
         }
 
         Kind firstElement = kinds.get(0);
         Kind lastElement = kinds.get(kinds.size() - 1);
 
-        // determine final event
-        if (lastElement == Kind.DELETE) {
-            if (firstElement == Kind.CREATE) {
-                logger.debug("Discarding events for '{}' because file was immediately deleted bafter creation", path);
-                return;
+        if (firstElement == Kind.CREATE) {
+            if (lastElement == Kind.DELETE) {
+                logger.debug("Discarding events for '{}' because file was immediately deleted after creation", path);
+                return List.of();
+            } else {
+                return List.of(Kind.CREATE);
             }
-            doNotify(path, Kind.DELETE);
-        } else if (firstElement == Kind.CREATE) {
-            doNotify(path, Kind.CREATE);
-        } else {
-            doNotify(path, Kind.MODIFY);
+        } else if (firstElement == Kind.DELETE) {
+            if (lastElement == Kind.DELETE) {
+                return List.of(Kind.DELETE);
+            } else {
+                return List.of(Kind.DELETE, Kind.CREATE);
+            }
+        } else if (lastElement == Kind.DELETE) {
+            return List.of(Kind.DELETE);
+        } else if (kinds.contains(Kind.CREATE)) {
+            return List.of(Kind.DELETE, Kind.CREATE);
         }
+
+        return List.of(Kind.MODIFY);
     }
 
     private void doNotify(Path path, Kind kind) {

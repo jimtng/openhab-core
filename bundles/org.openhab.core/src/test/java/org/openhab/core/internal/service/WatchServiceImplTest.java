@@ -14,14 +14,23 @@ package org.openhab.core.internal.service;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.AfterEach;
@@ -37,6 +46,9 @@ import org.openhab.core.JavaTest;
 import org.openhab.core.service.WatchService;
 import org.openhab.core.service.WatchService.Kind;
 import org.osgi.framework.BundleContext;
+
+import io.methvin.watcher.DirectoryChangeEvent;
+import io.methvin.watcher.hashing.FileHash;
 
 /**
  * The {@link WatchServiceImplTest} is a
@@ -87,7 +99,7 @@ public class WatchServiceImplTest extends JavaTest {
         assertEvent(relativeTestFilePath, Kind.MODIFY);
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.delete(testFile);
         assertEvent(relativeTestFilePath, Kind.DELETE);
@@ -110,7 +122,7 @@ public class WatchServiceImplTest extends JavaTest {
         assertEvent(relativeTestFilePath, Kind.MODIFY);
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.delete(testFile);
         assertEvent(relativeTestFilePath, Kind.DELETE);
@@ -133,7 +145,7 @@ public class WatchServiceImplTest extends JavaTest {
         assertEvent(relativeTestFilePath, Kind.MODIFY);
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.delete(testFile);
         assertEvent(relativeTestFilePath, Kind.DELETE);
@@ -148,16 +160,16 @@ public class WatchServiceImplTest extends JavaTest {
         Path testFile = rootPath.resolve(SUB_DIR_PATH_NAME).resolve(TEST_FILE_NAME);
 
         Files.writeString(testFile, "initial content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.delete(testFile);
-        assertNoEvent();
+        assertNoEvents();
     }
 
     @Test
@@ -165,7 +177,7 @@ public class WatchServiceImplTest extends JavaTest {
         watchService.registerListener(listener, rootPath, true);
 
         Path subDirSubDir = Files.createDirectories(rootPath.resolve(SUB_DIR_PATH_NAME).resolve(SUB_DIR_PATH_NAME));
-        assertNoEvent();
+        assertNoEvents();
 
         Path testFile = subDirSubDir.resolve(TEST_FILE_NAME);
         Path relativeTestFilePath = rootPath.relativize(testFile);
@@ -177,16 +189,64 @@ public class WatchServiceImplTest extends JavaTest {
         assertEvent(relativeTestFilePath, Kind.MODIFY);
 
         Files.writeString(testFile, "modified content", StandardCharsets.UTF_8);
-        assertNoEvent();
+        assertNoEvents();
 
         Files.delete(testFile);
         assertEvent(relativeTestFilePath, Kind.DELETE);
 
         Files.delete(subDirSubDir);
-        assertNoEvent();
+        assertNoEvents();
     }
 
-    private void assertNoEvent() throws InterruptedException {
+    // Test sequence of events that could occur in some real life environments
+    @Test
+    public void testMultipleEvents() throws IOException, InterruptedException {
+        watchService.registerListener(listener, Path.of(""), false);
+        Path testFile = rootPath.resolve(TEST_FILE_NAME).toAbsolutePath();
+        Path relativeTestFilePath = Path.of(TEST_FILE_NAME);
+
+        // reduce multiple repeating patterns
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.DELETE, Kind.CREATE, Kind.DELETE, Kind.CREATE));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.DELETE, Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.DELETE, Kind.CREATE, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.DELETE, Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile,
+                Arrays.asList(Kind.DELETE, Kind.CREATE, Kind.MODIFY, Kind.DELETE, Kind.CREATE, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.DELETE, Kind.CREATE));
+
+        // reduce repeated MODIFY to a single event
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.MODIFY, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.MODIFY));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.MODIFY, Kind.MODIFY, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.MODIFY));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.MODIFY, Kind.DELETE, Kind.CREATE, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.DELETE, Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.MODIFY, Kind.DELETE, Kind.CREATE));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.DELETE, Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.CREATE, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile,
+                Arrays.asList(Kind.CREATE, Kind.MODIFY, Kind.DELETE, Kind.CREATE, Kind.MODIFY));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.CREATE, Kind.DELETE, Kind.CREATE));
+        assertEvents(relativeTestFilePath, Arrays.asList(Kind.CREATE));
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.CREATE, Kind.MODIFY, Kind.DELETE));
+        assertNoEvents();
+
+        artificiallyGenerateEvents(testFile, Arrays.asList(Kind.CREATE, Kind.DELETE));
+        assertNoEvents();
+    }
+
+    private void assertNoEvents() throws InterruptedException {
         Thread.sleep(5000);
 
         assertThat(listener.events, empty());
@@ -199,6 +259,31 @@ public class WatchServiceImplTest extends JavaTest {
         assertThat(listener.events, hasSize(1));
         assertThat(listener.events, hasItem(new Event(path, kind)));
         listener.events.clear();
+    }
+
+    private void assertEvents(Path path, List<Kind> kinds) throws InterruptedException {
+        waitForAssert(() -> assertThat(listener.events, not(empty())));
+        Thread.sleep(500);
+
+        var eventKinds = kinds.stream().map(kind -> new Event(path, kind)).collect(Collectors.toList());
+        assertThat(listener.events, equalTo(eventKinds));
+        listener.events.clear();
+    }
+
+    private void generateEvent(Path path, Kind kind) throws IOException, InterruptedException {
+        final Map<Kind, DirectoryChangeEvent.EventType> kindMap = Map.of( //
+                Kind.CREATE, DirectoryChangeEvent.EventType.CREATE, //
+                Kind.DELETE, DirectoryChangeEvent.EventType.DELETE, //
+                Kind.MODIFY, DirectoryChangeEvent.EventType.MODIFY);
+        DirectoryChangeEvent event = new DirectoryChangeEvent(kindMap.get(kind), false, path, FileHash.fromLong(0), 1,
+                path.getRoot());
+        watchService.onEvent(event);
+    }
+
+    private void artificiallyGenerateEvents(Path path, List<Kind> kinds) throws IOException, InterruptedException {
+        for (Kind kind : kinds) {
+            generateEvent(path, kind);
+        }
     }
 
     private static class TestWatchEventListener implements WatchService.WatchEventListener {
