@@ -22,7 +22,6 @@ import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.common.registry.AbstractRegistry;
-import org.openhab.core.common.registry.Provider;
 import org.openhab.core.thing.UID;
 
 /**
@@ -201,7 +200,7 @@ public abstract class AbstractLinkRegistry<L extends AbstractLink, P extends Pro
         toLinkLock.readLock().lock();
         try {
             final Set<L> forLinkedUID = linkedUidToLink.get(uid);
-            return forLinkedUID != null ? new HashSet<>(forLinkedUID) : Set.of();
+            return forLinkedUID != null ? Set.copyOf(forLinkedUID) : Set.of();
         } finally {
             toLinkLock.readLock().unlock();
         }
@@ -217,7 +216,7 @@ public abstract class AbstractLinkRegistry<L extends AbstractLink, P extends Pro
         toLinkLock.readLock().lock();
         try {
             final Set<L> forLinkedUID = itemNameToLink.get(itemName);
-            return forLinkedUID != null ? new HashSet<>(forLinkedUID) : Set.of();
+            return forLinkedUID != null ? Set.copyOf(forLinkedUID) : Set.of();
         } finally {
             toLinkLock.readLock().unlock();
         }
