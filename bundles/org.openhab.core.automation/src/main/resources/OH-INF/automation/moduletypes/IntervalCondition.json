@@ -2,14 +2,14 @@
 	"conditions": [
 		{
 			"uid": "timer.IntervalCondition",
-			"label": "a minimum interval between checks is reached",
-			"description": "Evaluates the interval between checks.",
+			"label": "a minimum interval between successful evaluations",
+      "description": "Rate limits this condition by requiring a minimum interval between successful evaluations.",
 			"configDescriptions": [
 				{
 					"name": "minInterval",
 					"type": "INTEGER",
 					"label": "Minimum Interval",
-					"description": "Returns true if the last satisfied check was at least this many milliseconds ago.",
+          "description": "The minimum number of milliseconds required to rate limit successful evaluations.",
 					"required": true
 				}
 			]
